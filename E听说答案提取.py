@@ -7,9 +7,8 @@ from functools import partial
 import logging
 from tkinter import ttk, font
 import sys
-import 启动E听说答案提取
 import winreg  # 用于读取系统主题
-
+import subprocess
 logging.basicConfig(filename='log.log', filemode='w', format='%(name)s - %(levelname)s - %(message)s')
 global jiaoji 
 global fushu
@@ -311,12 +310,13 @@ def main():
 
 def restart():
     try:
-        启动E听说答案提取.run()
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        interpreter = sys.executable  # 使用当前 Python 解释器
+        launcher = os.path.join(base_dir, 'E听说答案提取.py')
+        subprocess.Popen([interpreter, launcher], cwd=base_dir)
         event.destroy()
-        logging.info("Tkinter 窗口已销毁")
         os._exit(0)
     except Exception as e:
-        logging.error(f"重启失败: {e}")
         messagebox.showerror("错误", f"重启失败: {e}")
 
 def apply_colors(colors):

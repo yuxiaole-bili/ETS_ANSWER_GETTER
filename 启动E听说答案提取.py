@@ -11,6 +11,7 @@ import subprocess
 import sys
 from tkinter import font
 import winreg
+import time
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -25,6 +26,7 @@ except:
 
 if not os.path.exists('settings.json'):
     json_save_defaults = {
+        "env": "didnt",
         "filixable": "defaults",
         "defaults": {"jiaoji": "8", "fushu": "4", "biaoda": "4"},
         "u_filixable": {"jiaoji": "", "fushu": "", "biaoda": ""},
@@ -34,7 +36,7 @@ if not os.path.exists('settings.json'):
     with open('settings.json', 'w', encoding='utf-8') as f:
         json.dump(json_save_defaults, f, ensure_ascii=False, indent=4)
 
-process = None
+process = None  # 全局进程变量
 
 light_colors = {
     'bg': '#f5f5f5',
@@ -59,6 +61,12 @@ dark_colors = {
     'frame_bg': '#252525',
 }
 current_colors = light_colors
+
+def get_base_dir():
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    else:
+        return os.path.dirname(os.path.abspath(__file__))
 
 def get_system_theme():
     try:
@@ -114,7 +122,6 @@ def apply_colors(colors):
             update_children(child)
     update_children(event_s)
     
-    # 更新所有设置窗口
     if hasattr(event_s, 'settings_windows'):
         for win in event_s.settings_windows:
             win.apply_colors(colors)
@@ -153,7 +160,6 @@ class SettingsWindow:
         self.win.transient(parent)
         self.win.grab_set()
         
-        # 注册到父窗口
         if not hasattr(parent, 'settings_windows'):
             parent.settings_windows = []
         parent.settings_windows.append(self)
@@ -164,7 +170,6 @@ class SettingsWindow:
         
         self.create_widgets()
         self.load_current_settings()
-        # 应用当前主题
         self.apply_colors(current_colors)
         
     def create_widgets(self):
@@ -249,13 +254,11 @@ class SettingsWindow:
         self.destroy()
     
     def destroy(self):
-        # 从父窗口的列表中移除
         if hasattr(self.parent, 'settings_windows') and self in self.parent.settings_windows:
             self.parent.settings_windows.remove(self)
         self.win.destroy()
     
     def apply_colors(self, colors):
-        # 应用颜色到本窗口的所有控件
         self.win.configure(bg=colors['bg'])
         def update_children(widget):
             try:
@@ -266,22 +269,139 @@ class SettingsWindow:
             for child in widget.winfo_children():
                 update_children(child)
         update_children(self.win)
+def run():
+    global process
+    # 首先获取 base_dir
+    base_dir = get_base_dir()
+    python310_dir = os.path.join(base_dir, 'python310')
+    python_exe = os.path.join(python310_dir, 'python.exe')
+    target_file = os.path.join(base_dir, "E听说答案提取.py")
+    tcl_lib = os.path.join(python310_dir, 'tcl', 'tcl8.6')
+    tk_lib = os.path.join(python310_dir, 'tcl', 'tk8.6')
+
+    # 检查 Python 解释器是否存在
+    if not os.path.exists(python_exe):
+        messagebox.showerror("错误", f"找不到Python解释器：{python_exe}\n请重新安装。")
+        return
+
+    # 验证 Tcl/Tk 库路径
+    if not os.path.exists(tcl_lib):
+        messagebox.showerror("错误", f"Tcl库路径不存在：{tcl_lib}")
+        return
+    if not os.path.exists(tk_lib):
+        messagebox.showerror("错误", f"Tk库路径不存在：{tk_lib}")
+        return
+
+    # 构建干净的环境变量
+    env = os.environ.copy()
+    env.pop('PYTHONPATH', None)
+    env.pop('PYTHONHOME', None)
+    env['TCL_LIBRARY'] = tcl_lib
+    env['TK_LIBRARY'] = tk_lib
+    env['PATH'] = python310_dir + os.pathsep + env.get('PATH', '')
+
+    # 检查是否需要测试环境（从 settings.json 读取标记）
+    settings_path = os.path.join(base_dir, 'settings.json')
+    need_test = True
+    try:
+        with open(settings_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            if data.get('env_tested', False):
+                need_test = False
+    except:
+        # settings.json 不存在或读取失败，默认需要测试
+        need_test = True
+
+    if need_test:
+        # 测试嵌入式 Python 环境
+        test_cmd = [python_exe, '-c', 'import tkinter; print("ok")']
+        try:
+            test_process = subprocess.run(test_cmd, env=env, capture_output=True, text=True, timeout=5)
+            if test_process.returncode != 0:
+                error_msg = f"嵌入式 Python 环境测试失败（返回码 {test_process.returncode}）\n"
+                if test_process.stdout:
+                    error_msg += f"标准输出：{test_process.stdout}\n"
+                if test_process.stderr:
+                    error_msg += f"错误输出：{test_process.stderr}\n"
+                messagebox.showerror("环境错误", error_msg)
+                return
+            else:
+                # 测试通过，写入标记到 settings.json
+                try:
+                    # 读取现有数据（可能包含其他设置）
+                    with open(settings_path, 'r+', encoding='utf-8') as f:
+                        data = json.load(f)
+                        data['env_tested'] = True
+                        f.seek(0)
+                        json.dump(data, f, ensure_ascii=False, indent=4)
+                        f.truncate()
+                except:
+                    # 如果 settings.json 不存在或写入失败，忽略（下次还会测试）
+                    pass
+        except subprocess.TimeoutExpired:
+            messagebox.showerror("环境错误", "测试超时，可能卡住")
+            return
+        except Exception as e:
+            messagebox.showerror("环境错误", f"测试异常：{e}")
+            return
+
+    # 测试通过，启动主程序
+    try:
+        process = subprocess.Popen([python_exe, target_file], env=env)
+    except Exception as e:
+        messagebox.showerror("错误", f"启动失败: {e}")
+
+def stop():
+    global process  # 正确声明
+    if process and process.poll() is None:
+        process.terminate()
+        process = None
+    event_s.destroy()
+
+def delete_folder(root_dir):
+    if not messagebox.askyesno("确认", "确定删除所有题目文件？该操作不可逆！"):
+        return
+    deleted = []
+    for item in os.listdir(root_dir):
+        item_path = os.path.join(root_dir, item)
+        if os.path.isdir(item_path) and item.isdigit():
+            try:
+                shutil.rmtree(item_path)
+                deleted.append(item)
+            except Exception as e:
+                print(f"删除失败 {item_path}: {e}")
+    if deleted:
+        messagebox.showinfo("提示", f"已删除目录:\n" + "\n".join(deleted))
+    else:
+        messagebox.showinfo("提示", "未找到数字命名的目录")
+
+def delete_file():
+    deleted = []
+    for fname in ["ETS答案.txt", "log.log"]:
+        fpath = os.path.join(current_dir, fname)
+        if os.path.exists(fpath):
+            try:
+                os.remove(fpath)
+                deleted.append(fname)
+            except Exception as e:
+                print(f"删除失败 {fpath}: {e}")
+    if deleted:
+        messagebox.showinfo("提示", f"已删除文件:\n" + "\n".join(deleted))
+    else:
+        messagebox.showinfo("提示", "没有需要删除的缓存文件")
+
+def open_folder():
+    os.startfile(current_dir)
+
+def settings():
+    SettingsWindow(event_s)
 
 def main():
-    global process, event_s
+    global event_s, process  # 声明全局
     event_s = tk.Tk()
     event_s.title("E听说答案提取启动器")
     event_s.geometry("300x250")
-    try:
-        event_s.iconbitmap(default='ETS.ico')
-    except:
-        try:
-            icon = tk.PhotoImage(file='ETS.png')
-            event_s.iconphoto(True, icon)
-        except:
-            pass
     
-    # 初始化设置窗口列表
     event_s.settings_windows = []
     
     try:
@@ -321,62 +441,12 @@ def main():
         event_s.columnconfigure(i, weight=1)
     event_s.grid_rowconfigure(5, weight=1)
     
+    try:
+        event_s.iconbitmap(default='ETS.ico')
+    except:
+        pass
+    
     event_s.mainloop()
 
-def run():
-    global process
-    target_file = os.path.join(current_dir, "E听说答案提取.py")
-    try:
-        process = subprocess.Popen([sys.executable, target_file])
-    except Exception as e:
-        messagebox.showerror("错误", f"启动失败: {e}")
-
-def stop():
-    global process
-    if process and process.poll() is None:
-        process.terminate()
-        process = None
-        messagebox.showinfo("提示", "已停止")
-        
-    else:
-        messagebox.showinfo("提示", "程序未运行")
-    event_s.destroy()
-def delete_folder(root_dir):
-    if not messagebox.askyesno("确认", "确定删除所有题目文件？该操作不可逆！"):
-        return
-    deleted = []
-    for item in os.listdir(root_dir):
-        item_path = os.path.join(root_dir, item)
-        if os.path.isdir(item_path) and item.isdigit():
-            try:
-                shutil.rmtree(item_path)
-                deleted.append(item)
-            except Exception as e:
-                print(f"删除失败 {item_path}: {e}")
-    if deleted:
-        messagebox.showinfo("提示", f"已删除目录:\n" + "\n".join(deleted))
-    else:
-        messagebox.showinfo("提示", "未找到数字命名的目录")
-
-def delete_file():
-    deleted = []
-    for fname in ["ETS答案.txt", "log.log"]:
-        fpath = os.path.join(current_dir, fname)
-        if os.path.exists(fpath):
-            try:
-                os.remove(fpath)
-                deleted.append(fname)
-            except Exception as e:
-                print(f"删除失败 {fpath}: {e}")
-    if deleted:
-        messagebox.showinfo("提示", f"已删除文件:\n" + "\n".join(deleted))
-    else:
-        messagebox.showinfo("提示", "没有需要删除的缓存文件")
-
-def open_folder():
-    os.startfile(current_dir)
-
-def settings():
-    SettingsWindow(event_s)
 if __name__ == "__main__":
     main()
