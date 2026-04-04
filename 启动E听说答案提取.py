@@ -12,6 +12,11 @@ import sys
 from tkinter import font
 import winreg
 import time
+import traceback
+
+def log_error(msg):
+    with open(os.path.join(os.path.dirname(__file__), 'launcher_error.log'), 'a', encoding='utf-8') as f:
+        f.write(msg + '\n')
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -347,15 +352,22 @@ def run():
 
     # 测试通过，启动主程序
     try:
-        process = subprocess.Popen([python_exe, target_file], env=env)
+        # 启动主程序时，不显示控制台窗口
+        process = subprocess.Popen(                   
+            [python_exe, target_file],
+            env=env,
+            creationflags=subprocess.CREATE_NO_WINDOW   # 关键参数
+        )
     except Exception as e:
         messagebox.showerror("错误", f"启动失败: {e}")
+        log_error(traceback.format_exc())
+        raise
 
 def stop():
     global process  # 正确声明
     if process and process.poll() is None:
         process.terminate()
-        process = None
+        process = Non
     event_s.destroy()
 
 def delete_folder(root_dir):
